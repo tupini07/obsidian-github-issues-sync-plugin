@@ -1,0 +1,265 @@
+/**
+ * Sync operations - pull and push
+ */
+
+import { App, Notice, TFile } from "obsidian";
+import type { PluginSettings, AuthState, GitHubIssue } from "../types";
+import {
+  parseProjectUrl,
+  fetchProjectMetadata,
+  fetchProjectIssues,
+  updateIssue,
+} from "../github/client";
+import {
+  writeIssueFile,
+  writeIndexFile,
+  parseFrontmatter,
+  extractBody,
+  archiveOldIssues,
+} from "../files/issue-files";
+import { processImagesOnPush, hasLocalImages } from "../files/images";
+
+/**
+ * Perform a full project sync (pull)
+ * 1. Fetch project metadata
+ * 2. Fetch all issues in current iteration
+ * 3. Write issue files
+ * 4. Write index file
+ * 5. Optionally archive old issues
+ */
+export async function syncProject(
+  app: App,
+  settings: PluginSettings,
+  authState: AuthState,
+  options: { archiveOld?: boolean } = {}
+): Promise<{ issueCount: number; archivedCount: number }> {
+  if (!authState.accessToken) {
+    throw new Error("Not authenticated. Please login to GitHub first.");
+  }
+
+  // Parse project URL
+  const projectInfo = parseProjectUrl(settings.projectUrl);
+  if (!projectInfo) {
+    throw new Error(
+      "Invalid project URL. Expected format: https://github.com/orgs/{org}/projects/{number}"
+    );
+  }
+
+  new Notice("Fetching project metadata...");
+
+  // Fetch project metadata
+  const metadata = await fetchProjectMetadata(
+    authState.accessToken,
+    settings.githubBaseUrl,
+    projectInfo
+  );
+
+  new Notice(
+    `Fetching issues${
+      metadata.currentIteration
+        ? ` for iteration: ${metadata.currentIteration.title}`
+        : ""
+    }...`
+  );
+
+  // Fetch issues (filtered to current iteration if available)
+  let issues = await fetchProjectIssues(
+    authState.accessToken,
+    settings.githubBaseUrl,
+    projectInfo,
+    metadata.currentIteration?.id || null
+  );
+
+  // Filter to only user's issues if enabled
+  if (settings.onlyMyIssues && authState.username) {
+    const myUsername = authState.username.toLowerCase();
+    issues = issues.filter((issue) =>
+      issue.assignees.some((a) => a.toLowerCase() === myUsername)
+    );
+  }
+
+  new Notice(`Found ${issues.length} issues. Writing files...`);
+
+  // Write issue files
+  for (const issue of issues) {
+    await writeIssueFile(app, settings, issue);
+  }
+
+  // Write index file
+  await writeIndexFile(
+    app,
+    settings,
+    issues,
+    metadata.statusField.options,
+    metadata.title,
+    metadata.currentIteration?.title || null
+  );
+
+  // Archive old issues if requested
+  let archivedCount = 0;
+  if (options.archiveOld) {
+    const currentIssueNumbers = new Set(issues.map((i) => i.number));
+    archivedCount = await archiveOldIssues(app, settings, currentIssueNumbers);
+  }
+
+  // Build completion message
+  let message = `Sync complete! ${issues.length} issues synced`;
+  if (archivedCount > 0) {
+    message += `, ${archivedCount} archived`;
+  }
+  message += ".";
+
+  new Notice(message);
+
+  return { issueCount: issues.length, archivedCount };
+}
+
+/**
+ * Push changes from the current issue file to GitHub
+ */
+export async function pushCurrentIssue(
+  app: App,
+  settings: PluginSettings,
+  authState: AuthState,
+  file: TFile
+): Promise<void> {
+  if (!authState.accessToken) {
+    throw new Error("Not authenticated. Please login to GitHub first.");
+  }
+
+  // Read and parse the file
+  const content = await app.vault.read(file);
+  const frontmatter = parseFrontmatter(content);
+
+  if (!frontmatter) {
+    throw new Error(
+      "This file does not appear to be a synced issue. Missing frontmatter."
+    );
+  }
+
+  // Extract body (the description)
+  const originalBody = extractBody(content);
+  let bodyForGitHub = originalBody;
+
+  // Upload local images to GitHub repo and replace with raw URLs (only for GitHub, not local file)
+  if (hasLocalImages(originalBody)) {
+    if (settings.imageHostingRepo) {
+      new Notice("Uploading images to GitHub...");
+      const imageResult = await processImagesOnPush(
+        app,
+        settings,
+        authState.accessToken,
+        originalBody
+      );
+      bodyForGitHub = imageResult.content;
+      if (imageResult.uploadedCount > 0) {
+        new Notice(`Uploaded ${imageResult.uploadedCount} image(s) to GitHub`);
+      }
+      if (imageResult.skippedCount > 0) {
+        new Notice(
+          `Skipped ${imageResult.skippedCount} image(s) (not found)`,
+          5000
+        );
+      }
+    } else {
+      new Notice(
+        "Warning: Local images found but no image hosting repo configured. Images will not display on GitHub.",
+        8000
+      );
+    }
+  }
+
+  // Parse repo owner and name
+  const repoParts = frontmatter.repo.split("/");
+  if (repoParts.length !== 2) {
+    throw new Error(`Invalid repo format in frontmatter: ${frontmatter.repo}`);
+  }
+
+  const [owner, repo] = repoParts;
+
+  new Notice(`Pushing changes to issue #${frontmatter.issue_number}...`);
+
+  // Update the issue on GitHub
+  // For title, we use the file name (without extension and issue number suffix)
+  // Actually, let's use the title from frontmatter since user might have changed it
+  // Or better: use the file name as the new title (since filename = title in Obsidian)
+  const newTitle = file.basename.replace(/\s*\(\d+\)$/, "").trim();
+
+  await updateIssue(
+    authState.accessToken,
+    settings.githubBaseUrl,
+    owner,
+    repo,
+    frontmatter.issue_number,
+    newTitle,
+    bodyForGitHub
+  );
+
+  // Update the frontmatter with new sync time and title (keep original body with local image paths)
+  const updatedFrontmatter = `---
+issue_number: ${frontmatter.issue_number}
+repo: "${frontmatter.repo}"
+title: "${newTitle.replace(/"/g, '\\"')}"
+status: "${frontmatter.status}"
+url: "${frontmatter.url}"
+last_synced: "${new Date().toISOString()}"
+---`;
+
+  const newContent = `${updatedFrontmatter}\n\n${originalBody}`;
+  await app.vault.modify(file, newContent);
+
+  new Notice(`Issue #${frontmatter.issue_number} updated successfully!`);
+}
+
+/**
+ * Archive issues that are not in the current iteration
+ */
+export async function cleanupOldIssues(
+  app: App,
+  settings: PluginSettings,
+  authState: AuthState
+): Promise<number> {
+  if (!authState.accessToken) {
+    throw new Error("Not authenticated. Please login to GitHub first.");
+  }
+
+  // Parse project URL
+  const projectInfo = parseProjectUrl(settings.projectUrl);
+  if (!projectInfo) {
+    throw new Error("Invalid project URL.");
+  }
+
+  new Notice("Fetching current iteration issues...");
+
+  // Fetch project metadata to get current iteration
+  const metadata = await fetchProjectMetadata(
+    authState.accessToken,
+    settings.githubBaseUrl,
+    projectInfo
+  );
+
+  // Fetch current issues
+  const issues = await fetchProjectIssues(
+    authState.accessToken,
+    settings.githubBaseUrl,
+    projectInfo,
+    metadata.currentIteration?.id || null
+  );
+
+  const currentIssueNumbers = new Set(issues.map((i) => i.number));
+
+  // Archive old issues
+  const archivedCount = await archiveOldIssues(
+    app,
+    settings,
+    currentIssueNumbers
+  );
+
+  if (archivedCount > 0) {
+    new Notice(`Archived ${archivedCount} old issue(s).`);
+  } else {
+    new Notice("No old issues to archive.");
+  }
+
+  return archivedCount;
+}
