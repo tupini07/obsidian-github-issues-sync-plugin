@@ -169,10 +169,10 @@ export async function pushCurrentIssue(
     }
   }
 
-  // Parse repo owner and name
+  // Parse repo owner and name (already parsed from url in frontmatter)
   const repoParts = frontmatter.repo.split("/");
   if (repoParts.length !== 2) {
-    throw new Error(`Invalid repo format in frontmatter: ${frontmatter.repo}`);
+    throw new Error(`Invalid repo format: ${frontmatter.repo}`);
   }
 
   const [owner, repo] = repoParts;
@@ -195,14 +195,9 @@ export async function pushCurrentIssue(
     bodyForGitHub
   );
 
-  // Update the frontmatter with new sync time and title (keep original body with local image paths)
+  // Update the frontmatter (keep original body with local image paths)
   const updatedFrontmatter = `---
-issue_number: ${frontmatter.issue_number}
-repo: "${frontmatter.repo}"
-title: "${newTitle.replace(/"/g, '\\"')}"
-status: "${frontmatter.status}"
 url: "${frontmatter.url}"
-last_synced: "${new Date().toISOString()}"
 ---`;
 
   const newContent = `${updatedFrontmatter}\n\n${originalBody}`;

@@ -177,14 +177,12 @@ export interface GitHubIssue {
   labels: string[];
 }
 
-/** Issue as stored in local markdown frontmatter */
+/** Issue as stored in local markdown frontmatter (minimal, only what's needed) */
 export interface IssueFrontmatter {
-  issue_number: number;
-  repo: string;
-  title: string;
-  status: string;
   url: string;
-  last_synced: string;
+  // Parsed from url:
+  repo: string;         // owner/repo
+  issue_number: number;
 }
 
 // ============================================================================

@@ -29,37 +29,14 @@ export async function ensureFolder(app: App, path: string): Promise<TFolder> {
 
 /**
  * Generate frontmatter YAML string for an issue
+ * Only includes the url - repo and issue_number are parsed from it
  */
 export function generateFrontmatter(issue: GitHubIssue): string {
-  const frontmatter: IssueFrontmatter = {
-    issue_number: issue.number,
-    repo: issue.repository,
-    title: issue.title,
-    status: issue.status,
-    url: issue.url,
-    last_synced: new Date().toISOString(),
-  };
-
   const lines = ["---"];
-  lines.push(`issue_number: ${frontmatter.issue_number}`);
-  lines.push(`repo: "${frontmatter.repo}"`);
-  lines.push(`title: "${escapeYamlString(frontmatter.title)}"`);
-  lines.push(`status: "${frontmatter.status}"`);
-  lines.push(`url: "${frontmatter.url}"`);
-  lines.push(`last_synced: "${frontmatter.last_synced}"`);
+  lines.push(`url: "${issue.url}"`);
   lines.push("---");
 
   return lines.join("\n");
-}
-
-/**
- * Escape special characters in YAML strings
- */
-function escapeYamlString(str: string): string {
-  return str
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, "\\n");
 }
 
 /**
@@ -144,47 +121,36 @@ export function parseFrontmatter(content: string): IssueFrontmatter | null {
   }
 
   const yamlContent = frontmatterMatch[1];
-  const frontmatter: Partial<IssueFrontmatter> = {};
+  let url: string | null = null;
 
-  // Simple YAML parsing for our known fields
+  // Simple YAML parsing - we only need url now
   const lines = yamlContent.split("\n");
   for (const line of lines) {
-    const match = line.match(/^(\w+):\s*"?([^"]*)"?\s*$/);
+    const match = line.match(/^url:\s*"?([^"]*)"?\s*$/);
     if (match) {
-      const [, key, value] = match;
-      switch (key) {
-        case "issue_number":
-          frontmatter.issue_number = parseInt(value, 10);
-          break;
-        case "repo":
-          frontmatter.repo = value;
-          break;
-        case "title":
-          frontmatter.title = value;
-          break;
-        case "status":
-          frontmatter.status = value;
-          break;
-        case "url":
-          frontmatter.url = value;
-          break;
-        case "last_synced":
-          frontmatter.last_synced = value;
-          break;
-      }
+      url = match[1];
+      break;
     }
   }
 
-  if (
-    frontmatter.issue_number &&
-    frontmatter.repo &&
-    frontmatter.title &&
-    frontmatter.url
-  ) {
-    return frontmatter as IssueFrontmatter;
+  if (!url) {
+    return null;
   }
 
-  return null;
+  // Parse repo and issue_number from url
+  // Format: https://github.com/{owner}/{repo}/issues/{number}
+  const urlMatch = url.match(/\/([^\/]+)\/([^\/]+)\/issues\/(\d+)/);
+  if (!urlMatch) {
+    return null;
+  }
+
+  const [, owner, repoName, issueNum] = urlMatch;
+
+  return {
+    url,
+    repo: `${owner}/${repoName}`,
+    issue_number: parseInt(issueNum, 10),
+  };
 }
 
 /**
