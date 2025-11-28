@@ -219,7 +219,7 @@ async function processLocalImage(
 
 /**
  * Process images in issue content for push: upload local images to GitHub repo
- * and replace with raw URLs
+ * and replace with raw URLs. Adds hidden comments to preserve local paths.
  */
 export async function processImagesOnPush(
   app: App,
@@ -253,14 +253,13 @@ export async function processImagesOnPush(
   for (const wm of wikiMatches) {
     const rawUrl = await processLocalImage(app, settings, accessToken, wm.path);
     if (rawUrl) {
-      // Replace wikilink with standard markdown image using raw URL
+      // Replace wikilink with standard markdown image + hidden comment for restoration
+      // Format: <!-- obsidian-local: path -->\n![alt](url)
       modifiedContent = modifiedContent.replace(
         wm.full,
-        `![${wm.alt}](${rawUrl})`
+        `<!-- obsidian-local: ${wm.path} -->\n![${wm.alt}](${rawUrl})`
       );
-      if (rawUrl.includes("raw.")) {
-        uploadedCount++;
-      }
+      uploadedCount++;
     } else {
       skippedCount++;
     }
@@ -288,19 +287,36 @@ export async function processImagesOnPush(
       mm.path
     );
     if (rawUrl) {
+      // Replace with URL + hidden comment for restoration
       modifiedContent = modifiedContent.replace(
         mm.full,
-        `![${mm.alt}](${rawUrl})`
+        `<!-- obsidian-local: ${mm.path} -->\n![${mm.alt}](${rawUrl})`
       );
-      if (rawUrl.includes("raw.")) {
-        uploadedCount++;
-      }
+      uploadedCount++;
     } else {
       skippedCount++;
     }
   }
 
   return { content: modifiedContent, uploadedCount, skippedCount };
+}
+
+/**
+ * Pattern to match our hidden comment + newline + image that follows
+ * Matches: <!-- obsidian-local: path -->\n![alt](url)
+ */
+const LOCAL_IMAGE_COMMENT_REGEX = /<!-- obsidian-local: ([^>]+) -->\n!\[[^\]]*\]\([^)]+\)/g;
+
+/**
+ * Process images on pull: restore local Obsidian paths from hidden comments
+ * Converts: <!-- obsidian-local: image.png -->![alt](https://...) 
+ * Back to:  ![[image.png]]
+ */
+export function restoreLocalImages(content: string): string {
+  return content.replace(LOCAL_IMAGE_COMMENT_REGEX, (_match, localPath) => {
+    // Restore as Obsidian wikilink
+    return `![[${localPath.trim()}]]`;
+  });
 }
 
 /**

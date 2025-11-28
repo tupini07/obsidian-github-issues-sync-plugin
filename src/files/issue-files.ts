@@ -10,6 +10,7 @@ import type {
   StatusOption,
 } from "../types";
 import { sanitizeFilename, generateIssueFilename } from "../types";
+import { restoreLocalImages } from "./images";
 
 /**
  * Ensure a folder exists, creating it if necessary
@@ -41,11 +42,12 @@ export function generateFrontmatter(issue: GitHubIssue): string {
 
 /**
  * Generate the full markdown content for an issue file
+ * Restores local image paths from hidden comments added during push
  */
 export function generateIssueContent(issue: GitHubIssue): string {
   const frontmatter = generateFrontmatter(issue);
-  // Body is the issue description
-  const body = issue.body || "";
+  // Body is the issue description - restore local image paths
+  const body = restoreLocalImages(issue.body || "");
 
   return `${frontmatter}\n\n${body}`;
 }

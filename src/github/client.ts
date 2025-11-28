@@ -47,8 +47,22 @@ export function parseProjectUrl(url: string): ProjectInfo | null {
   return null;
 }
 
+/** Retry configuration */
+const MAX_RETRIES = 5;
+const INITIAL_DELAY_MS = 1000;
+
+/** Status codes that should trigger a retry */
+const RETRYABLE_STATUS_CODES = [502, 503, 504, 429];
+
 /**
- * Execute a GraphQL query against the GitHub API
+ * Sleep for a specified duration
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Execute a GraphQL query against the GitHub API with retry logic
  */
 export async function graphqlRequest<T>(
   accessToken: string,
@@ -61,34 +75,80 @@ export async function graphqlRequest<T>(
     ? "https://api.github.com/graphql"
     : `${apiUrl}/graphql`;
 
-  const response = await requestUrl({
-    url: graphqlUrl,
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      query,
-      variables,
-    }),
-  });
+  let lastError: Error | null = null;
 
-  if (response.status !== 200) {
-    throw new Error(`GraphQL request failed: ${response.status}`);
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const response = await requestUrl({
+        url: graphqlUrl,
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query,
+          variables,
+        }),
+      });
+
+      if (response.status === 200) {
+        const data = response.json;
+
+        if (data.errors && data.errors.length > 0) {
+          const errorMessages = data.errors
+            .map((e: { message: string }) => e.message)
+            .join(", ");
+          throw new Error(`GraphQL errors: ${errorMessages}`);
+        }
+
+        return data.data as T;
+      }
+
+      // Check if we should retry this status code
+      if (RETRYABLE_STATUS_CODES.includes(response.status)) {
+        lastError = new Error(`Request failed, status ${response.status}`);
+        console.log(
+          `GitHub API returned ${response.status}, retrying (attempt ${attempt + 1}/${MAX_RETRIES})...`
+        );
+      } else {
+        // Non-retryable error, throw immediately
+        throw new Error(`GraphQL request failed: ${response.status}`);
+      }
+    } catch (error) {
+      // Check if this is a retryable error (network issues, timeouts)
+      if (error instanceof Error) {
+        const isRetryable =
+          error.message.includes("status 502") ||
+          error.message.includes("status 503") ||
+          error.message.includes("status 504") ||
+          error.message.includes("status 429") ||
+          error.message.includes("timeout") ||
+          error.message.includes("network");
+
+        if (isRetryable && attempt < MAX_RETRIES - 1) {
+          lastError = error;
+          console.log(
+            `Request failed: ${error.message}, retrying (attempt ${attempt + 1}/${MAX_RETRIES})...`
+          );
+        } else {
+          throw error;
+        }
+      } else {
+        throw error;
+      }
+    }
+
+    // Wait before retrying with exponential backoff
+    if (attempt < MAX_RETRIES - 1) {
+      const delay = INITIAL_DELAY_MS * Math.pow(2, attempt);
+      await sleep(delay);
+    }
   }
 
-  const data = response.json;
-
-  if (data.errors && data.errors.length > 0) {
-    const errorMessages = data.errors
-      .map((e: { message: string }) => e.message)
-      .join(", ");
-    throw new Error(`GraphQL errors: ${errorMessages}`);
-  }
-
-  return data.data as T;
+  // All retries exhausted
+  throw lastError || new Error("Request failed after retries");
 }
 
 /**
