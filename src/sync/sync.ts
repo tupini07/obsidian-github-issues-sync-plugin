@@ -37,81 +37,102 @@ export async function syncProject(
     throw new Error("Not authenticated. Please login to GitHub first.");
   }
 
-  // Parse project URL
-  const projectInfo = parseProjectUrl(settings.projectUrl);
-  if (!projectInfo) {
-    throw new Error(
-      "Invalid project URL. Expected format: https://github.com/orgs/{org}/projects/{number}"
+  // Create a persistent notice that we'll update as sync progresses
+  // Using 0 timeout makes it stay until we call hide()
+  const progressNotice = new Notice("⏳ Syncing: Starting...", 0);
+  
+  const updateProgress = (message: string) => {
+    progressNotice.setMessage(`⏳ Syncing: ${message}`);
+  };
+
+  try {
+    // Parse project URL
+    const projectInfo = parseProjectUrl(settings.projectUrl);
+    if (!projectInfo) {
+      progressNotice.hide();
+      throw new Error(
+        "Invalid project URL. Expected format: https://github.com/orgs/{org}/projects/{number}"
+      );
+    }
+
+    updateProgress("Fetching project metadata...");
+
+    // Fetch project metadata
+    const metadata = await fetchProjectMetadata(
+      authState.accessToken,
+      settings.githubBaseUrl,
+      projectInfo
     );
-  }
 
-  new Notice("Fetching project metadata...");
-
-  // Fetch project metadata
-  const metadata = await fetchProjectMetadata(
-    authState.accessToken,
-    settings.githubBaseUrl,
-    projectInfo
-  );
-
-  new Notice(
-    `Fetching issues${
-      metadata.currentIteration
-        ? ` for iteration: ${metadata.currentIteration.title}`
-        : ""
-    }...`
-  );
-
-  // Fetch issues (filtered to current iteration if available)
-  let issues = await fetchProjectIssues(
-    authState.accessToken,
-    settings.githubBaseUrl,
-    projectInfo,
-    metadata.currentIteration?.id || null
-  );
-
-  // Filter to only user's issues if enabled
-  if (settings.onlyMyIssues && authState.username) {
-    const myUsername = authState.username.toLowerCase();
-    issues = issues.filter((issue) =>
-      issue.assignees.some((a) => a.toLowerCase() === myUsername)
+    updateProgress(
+      `Fetching issues${
+        metadata.currentIteration
+          ? ` for ${metadata.currentIteration.title}`
+          : ""
+      }...`
     );
+
+    // Fetch issues (filtered to current iteration if available)
+    let issues = await fetchProjectIssues(
+      authState.accessToken,
+      settings.githubBaseUrl,
+      projectInfo,
+      metadata.currentIteration?.id || null
+    );
+
+    // Filter to only user's issues if enabled
+    if (settings.onlyMyIssues && authState.username) {
+      const myUsername = authState.username.toLowerCase();
+      issues = issues.filter((issue) =>
+        issue.assignees.some((a) => a.toLowerCase() === myUsername)
+      );
+    }
+
+    updateProgress(`Writing ${issues.length} issue files...`);
+
+    // Write issue files
+    for (let i = 0; i < issues.length; i++) {
+      updateProgress(`Writing issue ${i + 1}/${issues.length}...`);
+      await writeIssueFile(app, settings, issues[i]);
+    }
+
+    updateProgress("Writing index file...");
+
+    // Write index file
+    await writeIndexFile(
+      app,
+      settings,
+      issues,
+      metadata.statusField.options,
+      metadata.title,
+      metadata.currentIteration?.title || null
+    );
+
+    // Archive old issues if requested
+    let archivedCount = 0;
+    if (options.archiveOld) {
+      updateProgress("Archiving old issues...");
+      const currentIssueNumbers = new Set(issues.map((i) => i.number));
+      archivedCount = await archiveOldIssues(app, settings, currentIssueNumbers);
+    }
+
+    // Hide progress notice and show completion
+    progressNotice.hide();
+    
+    let message = `✅ Sync complete! ${issues.length} issues synced`;
+    if (archivedCount > 0) {
+      message += `, ${archivedCount} archived`;
+    }
+    message += ".";
+
+    new Notice(message);
+
+    return { issueCount: issues.length, archivedCount };
+  } catch (error) {
+    // Make sure to hide progress notice on error
+    progressNotice.hide();
+    throw error;
   }
-
-  new Notice(`Found ${issues.length} issues. Writing files...`);
-
-  // Write issue files
-  for (const issue of issues) {
-    await writeIssueFile(app, settings, issue);
-  }
-
-  // Write index file
-  await writeIndexFile(
-    app,
-    settings,
-    issues,
-    metadata.statusField.options,
-    metadata.title,
-    metadata.currentIteration?.title || null
-  );
-
-  // Archive old issues if requested
-  let archivedCount = 0;
-  if (options.archiveOld) {
-    const currentIssueNumbers = new Set(issues.map((i) => i.number));
-    archivedCount = await archiveOldIssues(app, settings, currentIssueNumbers);
-  }
-
-  // Build completion message
-  let message = `Sync complete! ${issues.length} issues synced`;
-  if (archivedCount > 0) {
-    message += `, ${archivedCount} archived`;
-  }
-  message += ".";
-
-  new Notice(message);
-
-  return { issueCount: issues.length, archivedCount };
 }
 
 /**
