@@ -200,10 +200,11 @@ export async function pushCurrentIssue(
 	new Notice(`Pushing changes to issue #${frontmatter.issue_number}...`);
 
 	// Update the issue on GitHub
-	// For title, we use the file name (without extension and issue number suffix)
+	// For title, we use the file name (without extension and issue number prefix)
 	// Actually, let's use the title from frontmatter since user might have changed it
 	// Or better: use the file name as the new title (since filename = title in Obsidian)
-	const newTitle = file.basename.replace(/\s*\(\d+\)$/, "").trim();
+	// Strip issue number prefix: "(123) Title" -> "Title"
+	const newTitle = file.basename.replace(/^\(\d+\)\s*/, "").trim();
 
 	await updateIssue(
 		authState.accessToken,

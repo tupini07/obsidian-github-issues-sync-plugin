@@ -1,7 +1,7 @@
 {
 	"id": "obsidian-github-issues-sync-plugin",
 	"name": "GitHub Issues Sync",
-	"version": "1.1.0",
+	"version": "1.1.1",
 	"minAppVersion": "0.15.0",
 	"description": "Sync your GitHub Issues with Obsidian notes.",
 	"author": "Andrea Tupini",
