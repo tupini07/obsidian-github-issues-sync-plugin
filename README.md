@@ -1,94 +1,93 @@
-# Obsidian Sample Plugin
+# GitHub Issues Sync
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+Sync GitHub Project issues to your Obsidian vault. Pull issues as markdown files, edit them with Obsidian's full editing experience, and push changes back to GitHub.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+This is useful if you want to work on issue descriptions using Obsidian's linking, backlinks, and markdown features. The plugin syncs issues from a GitHub Project's current iteration, so it works nicely with sprint-based workflows.
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open Sample Modal" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+## Features
 
-## First time developing plugins?
+- **Pull issues** from a GitHub Project (v2) into your vault as markdown files
+- **Push edits** back to GitHub - change issue descriptions right from Obsidian
+- **Iteration-aware** - automatically syncs issues from the current iteration
+- **Filter by assignee** - optionally sync only issues assigned to you
+- **Index file** - generates a board view grouped by status columns
+- **Archive old issues** - move issues from past iterations to an archive folder
+- **Image uploads** - local images get uploaded to a GitHub repo when pushing
+- **Open in GitHub** - quick command to jump to the issue on GitHub
+- **GitHub Enterprise support** - works with self-hosted GitHub instances
 
-Quick starting guide for new plugin devs:
+## Setup
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+### Authentication
 
-## Releasing new releases
+The plugin supports two authentication methods:
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+**Personal Access Token (simpler)**
+1. Go to GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens
+2. Create a token with access to your organization/repos
+3. Grant **Read and Write** access to "Issues" and **Read** access to "Projects"
+4. Use the "Login to GitHub" command and paste your token
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+**GitHub App (device flow)**
+1. Create a GitHub App in your org settings with Device Flow enabled
+2. Grant Read permission for "Projects" and Read/Write for "Issues"
+3. Install the app on your organization
+4. Enter the Client ID in plugin settings
+5. Use the "Login to GitHub" command and follow the browser flow
 
-## Adding your plugin to the community plugin list
+### Configuration
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+1. Set your **Project URL** - the full URL to your GitHub Project (e.g., `https://github.com/orgs/my-org/projects/14`)
+2. Configure the **Sync folder** - where issues will be stored in your vault (default: `GitHub Issues`)
+3. Optionally set up **Image hosting** - a GitHub repo where local images will be uploaded when pushing issues. This is necessary because as far as I could find, there's no way to directly manage the `user-attachments` of issues via the API. It's a bit hacky, but works alright.
 
-## How to use
+## Commands
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+| Command | Description |
+|---------|-------------|
+| **Login to GitHub** | Authenticate with GitHub |
+| **Logout from GitHub** | Clear your authentication |
+| **Sync project (pull from GitHub)** | Pull all issues from the current iteration |
+| **Sync current issue (push to GitHub)** | Push changes from the current file to GitHub |
+| **Clean up old issues (archive)** | Move issues no longer in the iteration to archive |
+| **Open current issue in GitHub** | Open the issue in your browser |
 
-## Manually installing the plugin
+## Folder Structure
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
-
-## Improve code quality with eslint (optional)
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- To use eslint with this project, make sure to install eslint from terminal:
-  - `npm install -g eslint`
-- To use eslint to analyze this project use this command:
-  - `eslint main.ts`
-  - eslint will then create a report with suggestions for code improvement by file and line number.
-- If your source code is in a folder, such as `src`, you can use eslint with this command to analyze all files in that folder:
-  - `eslint ./src/`
-
-## Funding URL
-
-You can include funding URLs where people who use your plugin can financially support it.
-
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
-
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
+```
+GitHub Issues/
+├── Board.md              # Index file with issues grouped by status
+├── _issues/
+│   ├── 123-issue-title.md
+│   ├── 124-another-issue.md
+│   └── ...
+└── _archive/             # Old issues get moved here
+    └── ...
 ```
 
-If you have multiple URLs, you can also do:
+Each issue file contains frontmatter with the GitHub URL, and the body is the issue description in markdown.
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
+## Image Handling
+
+When you push an issue that contains local images (like `![[screenshot.png]]` or `![](path/to/image.png)`), the plugin will:
+
+1. Upload the images to a GitHub repository you specify
+2. Replace local paths with GitHub raw URLs in the pushed content
+3. Keep the local paths in a hidden comment so they restore when you pull again
+
+To enable this, set an **Image hosting repository** in settings (format: `owner/repo`).
+
+## Notes
+
+- The plugin uses GitHub's GraphQL API, so it needs appropriate token scopes
+- Only issues (not draft issues or PRs) are synced
+- Status field and iterations are read from your Project's configuration
+- Works on mobile too (not desktop-only)
+
+## Development
+
+```bash
+npm install
+npm run dev    # watch mode
+npm run build  # production build
 ```
-
-## API Documentation
-
-See https://github.com/obsidianmd/obsidian-api
